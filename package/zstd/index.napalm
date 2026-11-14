@@ -1,0 +1,103 @@
+// Fire Zstd package, native ABI version 1.
+// FIRE_ZSTD_ROOT optionally points to the unpacked zstd module directory.
+
+const os = System.os();
+const arch = System.arch();
+
+if (os != "windows" && os != "linux" && os != "macos") {
+    throw `Zstd: unsupported operating system '${os}'`;
+}
+if (arch != "x86_64" && arch != "aarch64") {
+    throw `Zstd: unsupported CPU architecture '${arch}'`;
+}
+
+const nativeName = os == "windows" ? "fire_zstd.dll"
+    : os == "macos" ? "libfire_zstd.dylib"
+    : "libfire_zstd.so";
+
+function findPackageRoot() {
+    const explicitRoot = Process.getenv("FIRE_ZSTD_ROOT");
+    if (explicitRoot != null && explicitRoot.length > 0) {
+        return Path.resolve(explicitRoot);
+    }
+
+    // Until Napalm exposes the importing module's directory, look upward
+    // from the working directory for an installed project package.
+    let current = Path.resolve(Process.cwd());
+    for (let i = 0; i < 128; i++) {
+        const projectRoot = Path.join(current, "napalm_modules", "zstd");
+        if (Fs.exists(Path.join(projectRoot, "index.napalm"))) {
+            return projectRoot;
+        }
+
+        const libraryRoot = Path.join(current, ".napalm", "packages", "zstd");
+        if (Fs.exists(Path.join(libraryRoot, "index.napalm"))) {
+            return libraryRoot;
+        }
+
+        const parent = Path.dirname(current);
+        if (parent == current) break;
+        current = parent;
+    }
+    throw "Zstd: cannot locate module. Set FIRE_ZSTD_ROOT to the installed zstd directory";
+}
+
+const packageRoot = findPackageRoot();
+const nativePath = Path.resolve(packageRoot, "native", `${os}-${arch}`, nativeName);
+if (!Fs.exists(nativePath)) {
+    throw `Zstd: native library not present for ${os}-${arch}: ${nativePath}`;
+}
+
+const nativeLibrary = FFI.open(nativePath);
+const nativeAbiVersion = nativeLibrary.function("fire_zstd_abi_version", "i32", []);
+const nativeZstdVersion = nativeLibrary.function("fire_zstd_version_number", "i32", []);
+const nativeError = nativeLibrary.function("fire_zstd_last_error", "cstring", []);
+const nativeCompressFile = nativeLibrary.function(
+    "fire_zstd_compress_file", "i32", ["cstring", "cstring", "i32"]);
+const nativeDecompressFile = nativeLibrary.function(
+    "fire_zstd_decompress_file", "i32", ["cstring", "cstring", "u64"]);
+
+if (nativeAbiVersion.call() != 1) {
+    throw "Zstd: incompatible Fire native library ABI";
+}
+
+export class Zstd {
+    static versionNumber() {
+        return nativeZstdVersion.call();
+    }
+
+    static compressFile(source, destination, level) {
+        const compressionLevel = level == null ? 3 : level;
+        const status = nativeCompressFile.call(source, destination, compressionLevel);
+        if (status != 0) {
+            throw `Zstd.compressFile failed (${status}): ${nativeError.call()}`;
+        }
+        return destination;
+    }
+
+    static decompressFile(source, destination, maxOutputBytes) {
+        const limit = maxOutputBytes == null ? 1_073_741_824 : maxOutputBytes;
+        const status = nativeDecompressFile.call(source, destination, limit);
+        if (status != 0) {
+            throw `Zstd.decompressFile failed (${status}): ${nativeError.call()}`;
+        }
+        return destination;
+    }
+
+    static compress(source, level) {
+        return Zstd.compressFile(source, `${source}.zst`, level);
+    }
+
+    static decompress(source, destination) {
+        let target = destination;
+        if (target == null) {
+            if (!source.endsWith(".zst")) {
+                throw "Zstd.decompress requires a destination unless the input ends with .zst";
+            }
+            target = source.slice(0, source.length - 4);
+        }
+        return Zstd.decompressFile(source, target, null);
+    }
+}
+
+export default Zstd;

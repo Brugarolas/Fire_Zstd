@@ -1,0 +1,23 @@
+import Zstd from "../package/zstd/index";
+
+const root = Process.cwd();
+const source = Path.join(root, "fire_zstd_test_input.dat");
+const packed = Path.join(root, "fire_zstd_test_input.dat.zst");
+const unpacked = Path.join(root, "fire_zstd_test_output.dat");
+
+Fs.writeText(source, "Napalm Fire: compression smoke test! 🔥\n");
+try {
+    const compressedPath = Zstd.compress(source, 3);
+    if (compressedPath != packed) throw "Unexpected output path";
+    const decompressedPath = Zstd.decompress(packed, unpacked);
+    if (decompressedPath != unpacked) throw "Unexpected decompressed path";
+    if (Fs.readText(source) != Fs.readText(unpacked)) {
+        throw "Zstd round trip mismatch";
+    }
+    if (Zstd.versionNumber() < 10500) throw "Unexpected libzstd version";
+    System.print("Fire Zstd FFI smoke test passed");
+} finally {
+    if (Fs.exists(source)) Fs.removeFile(source);
+    if (Fs.exists(packed)) Fs.removeFile(packed);
+    if (Fs.exists(unpacked)) Fs.removeFile(unpacked);
+}

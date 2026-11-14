@@ -1,0 +1,7 @@
+/build-clank/
+/vendor/zstd/
+/package/zstd/native/
+/packages/
+*.fire-tmp-*
+build-*
+vendor
