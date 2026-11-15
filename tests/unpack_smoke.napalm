@@ -1,0 +1,53 @@
+// End-to-end Napalm TAR.ZST extraction test.
+// Run from the FireZstd project root after building the native libraries.
+import Zstd from "../package/zstd/index.napalm";
+
+function expect(condition, description) {
+    if (!condition) throw `FireZstd unpack test: ${description}`;
+}
+
+const sourceDirectory = Zstd.packageRoot();
+const archive = Path.resolve(Process.cwd(), "__firezstd_unpack_smoke.tar.zst");
+
+// Find a free destination without depending on clocks or random APIs.
+let destination = null;
+for (let index = 0; index < 10000; index++) {
+    const candidate = Path.resolve(Process.cwd(), `__firezstd_unpack_smoke_${index}`);
+    if (!Fs.exists(candidate)) {
+        destination = candidate;
+        break;
+    }
+}
+if (destination == null) throw "FireZstd unpack smoke: no available destination directory";
+if (Fs.exists(archive)) throw "FireZstd unpack smoke: archive already exists";
+
+try {
+    Zstd.packFiles(sourceDirectory, ["index.napalm", "LICENSE.zstd"], archive, 18);
+    expect(Fs.exists(archive), "packFiles did not create a TAR.ZST archive");
+
+    const extracted = Zstd.unpackFiles(archive, destination, 50_000_000);
+    expect(extracted == destination, "unpackFiles returned an unexpected directory");
+    expect(Fs.exists(Path.join(destination, "index.napalm")), "index.napalm was not extracted");
+    expect(Fs.exists(Path.join(destination, "LICENSE.zstd")), "LICENSE.zstd was not extracted");
+    expect(Fs.readBytes(Path.join(destination, "index.napalm")).equals(
+        Fs.readBytes(Path.join(sourceDirectory, "index.napalm"))),
+        "index.napalm contents differ");
+    expect(Fs.readBytes(Path.join(destination, "LICENSE.zstd")).equals(
+        Fs.readBytes(Path.join(sourceDirectory, "LICENSE.zstd"))),
+        "LICENSE.zstd contents differ");
+
+    let overwrote = false;
+    try {
+        Zstd.unpack(archive, destination);
+        overwrote = true;
+    } catch (error) {
+        // Refusing an existing destination is the expected behavior.
+    }
+    expect(!overwrote, "unpack overwrote the existing destination");
+
+    System.print(`FireZstd unpack smoke passed. Extracted directory: ${destination}`);
+} finally {
+    if (Fs.exists(archive)) Fs.removeFile(archive);
+    // Napalm does not currently expose a portable remove-directory API.
+    // The extracted test directory is intentionally kept for inspection.
+}

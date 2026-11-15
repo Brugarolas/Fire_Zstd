@@ -1,0 +1,19 @@
+// Package all six native libraries and the Napalm module into one TAR.ZST.
+// Run after building FireZstd on every registered cross target.
+import Zstd from "../package/zstd/index.napalm";
+
+const files = [
+    "index.napalm",
+    "LICENSE.zstd",
+    "libzstd-windows-x86_64.dll",
+    "libzstd-windows-aarch64.dll",
+    "libzstd-linux-x86_64.so",
+    "libzstd-linux-aarch64.so",
+    "libzstd-macos-x86_64.dylib",
+    "libzstd-macos-aarch64.dylib",
+];
+const directory = Zstd.packageRoot();
+const destination = Path.resolve(Process.cwd(), "zstd.tar.zst");
+
+Zstd.packFiles(directory, files, destination, 18);
+System.print(`Created ${destination} with ${files.length} files at Zstd level 18`);

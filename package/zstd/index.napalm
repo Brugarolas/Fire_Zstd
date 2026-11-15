@@ -1,8 +1,10 @@
-// Fire Zstd package, native ABI version 1.
+// Fire Zstd package, native ABI version 3.
 // FIRE_ZSTD_ROOT optionally points to the unpacked zstd module directory.
 
-const os = System.os();
-const arch = System.arch();
+const detectedOs = System.os();
+const detectedArch = System.arch();
+const os = detectedOs == "darwin" ? "macos" : detectedOs == "win32" ? "windows" : detectedOs;
+const arch = detectedArch == "arm64" ? "aarch64" : detectedArch == "x64" || detectedArch == "amd64" ? "x86_64" : detectedArch;
 
 if (os != "windows" && os != "linux" && os != "macos") {
     throw `Zstd: unsupported operating system '${os}'`;
@@ -11,19 +13,8 @@ if (arch != "x86_64" && arch != "aarch64") {
     throw `Zstd: unsupported CPU architecture '${arch}'`;
 }
 
-const nativeName = os == "windows" ? "fire_zstd.dll"
-    : os == "macos" ? "libfire_zstd.dylib"
-    : "libfire_zstd.so";
-
-function getNativeName() {
-    if (os == "windows") {
-        return "fire_zstd.dll";
-    }
-    if (os == "macos") {
-        return "libfire_zstd.dylib";
-    }
-    return "libfire_zstd.so";
-}
+const extension = os == "windows" ? ".dll" : os == "macos" ? ".dylib" : ".so";
+const nativeName = `libzstd-${os}-${arch}${extension}`;
 
 function findPackageRoot() {
     const explicitRoot = Process.getenv("FIRE_ZSTD_ROOT");
@@ -35,6 +26,17 @@ function findPackageRoot() {
     // from the working directory for an installed project package.
     let current = Path.resolve(Process.cwd());
     for (let i = 0; i < 128; i++) {
+        // The module may itself be the current directory.
+        if (Fs.exists(Path.join(current, "index.napalm")) && Fs.exists(Path.join(current, nativeName))) {
+            return current;
+        }
+
+        // Also support development from the FireZstd project root.
+        const developmentRoot = Path.join(current, "package", "zstd");
+        if (Fs.exists(Path.join(developmentRoot, "index.napalm"))) {
+            return developmentRoot;
+        }
+
         const projectRoot = Path.join(current, "napalm_modules", "zstd");
         if (Fs.exists(Path.join(projectRoot, "index.napalm"))) {
             return projectRoot;
@@ -53,23 +55,172 @@ function findPackageRoot() {
 }
 
 const packageRoot = findPackageRoot();
-const nativePath = Path.resolve(packageRoot, "native", `${os}-${arch}`, getNativeName);
+const nativePath = Path.resolve(packageRoot, nativeName);
 if (!Fs.exists(nativePath)) {
     throw `Zstd: native library not present for ${os}-${arch}: ${nativePath}`;
 }
 
 const nativeLibrary = FFI.open(nativePath);
 const nativeAbiVersion = nativeLibrary.function("fire_zstd_abi_version", "i32", []);
+if (nativeAbiVersion.call() != 3) {
+    throw "Zstd: incompatible Fire native library ABI (expected 3). Rebuild all native libraries from the current fire_zstd.c";
+}
+
 const nativeZstdVersion = nativeLibrary.function("fire_zstd_version_number", "i32", []);
 const nativeError = nativeLibrary.function("fire_zstd_last_error", "cstring", []);
 const nativeCompressFile = nativeLibrary.function("fire_zstd_compress_file", "i32", ["cstring", "cstring", "i32"]);
 const nativeDecompressFile = nativeLibrary.function("fire_zstd_decompress_file", "i32", ["cstring", "cstring", "u64"]);
+const nativePackFiles = nativeLibrary.function("fire_zstd_pack_files", "i32", ["cstring", "cstring", "cstring", "i32"]);
+const nativeUnpackFiles = nativeLibrary.function("fire_zstd_unpack_files", "i32", ["cstring", "cstring", "u64"]);
 
-if (nativeAbiVersion.call() != 1) {
-    throw "Zstd: incompatible Fire native library ABI";
+// The native ustar writer accepts a flat, newline-delimited manifest.
+// Keep this protocol internal so callers can use regular Napalm Lists.
+function toFileManifest(filenames) {
+    if (typeof filenames == "String") {
+        if (filenames.length == 0) {
+            throw "Zstd.packFiles: the file manifest cannot be empty";
+        }
+        return filenames;
+    }
+
+    if (filenames == null) {
+        throw "Zstd.packFiles: expected a List of filenames";
+    }
+    const kind = typeof filenames;
+    if (kind != "List" && !kind.startsWith("List<") && kind != "Array" && !kind.startsWith("Array<")) {
+        throw "Zstd.packFiles: expected a List of filenames or a newline-delimited String";
+    }
+    if (filenames.length == 0 || filenames.length > 64) {
+        throw "Zstd.packFiles: expected between 1 and 64 files";
+    }
+
+    let manifest = "";
+    for (const filename of filenames) {
+        if (typeof filename != "String" || filename.length == 0) {
+            throw "Zstd.packFiles: every filename must be a nonempty String";
+        }
+        if (manifest.length > 0) manifest = manifest + "\n";
+        manifest = manifest + filename;
+    }
+    return manifest;
+}
+
+function requirePathList(paths, method) {
+    if (paths == null) {
+        throw `${method}: expected a nonempty List of paths`;
+    }
+    const kind = typeof paths;
+    if (kind != "List" && !kind.startsWith("List<") && kind != "Array" && !kind.startsWith("Array<")) {
+        throw `${method}: expected a List of paths`;
+    }
+    if (paths.length == 0 || paths.length > 64) {
+        throw `${method}: expected between 1 and 64 paths`;
+    }
 }
 
 export class Zstd {
+    static packageRoot() {
+        return packageRoot;
+    }
+
+    // Create a compressed ustar archive from named files in one directory.
+    // filenames is a List of flat filenames. A legacy newline-delimited String
+    // is also accepted for backward compatibility.
+    static packFiles(directory, filenames, destination, level) {
+        if (typeof directory != "String" || directory.length == 0 ||
+            typeof destination != "String" || destination.length == 0) {
+            throw "Zstd.packFiles: directory and destination must be nonempty Strings";
+        }
+        const manifest = toFileManifest(filenames);
+        const compressionLevel = level == null ? 18 : level;
+        const status = nativePackFiles.call(Path.resolve(directory), manifest, Path.resolve(destination), compressionLevel);
+        if (status != 0) {
+            throw `Zstd.packFiles failed (${status}): ${nativeError.call()}`;
+        }
+        return destination;
+    }
+
+    // Pack a List of absolute or relative paths sharing the same parent folder.
+    // The archive stores only their basenames, not absolute filesystem paths.
+    static packPaths(paths, destination, level) {
+        requirePathList(paths, "Zstd.packPaths");
+        if (typeof destination != "String" || destination.length == 0) {
+            throw "Zstd.packPaths: destination must be a nonempty String";
+        }
+
+        let directory = null;
+        const filenames = [];
+        for (const path of paths) {
+            if (typeof path != "String" || path.length == 0) {
+                throw "Zstd.packPaths: every path must be a nonempty String";
+            }
+            const absolute = Path.resolve(path);
+            const parent = Path.dirname(absolute);
+            if (directory == null) {
+                directory = parent;
+            } else if (directory != parent) {
+                throw "Zstd.packPaths: all files must be in the same directory";
+            }
+            filenames.push(Path.basename(absolute));
+        }
+        return Zstd.packFiles(directory, filenames, destination, level);
+    }
+
+    // Pack every immediate regular file in a directory (not subdirectories).
+    // Exclude the output archive when it is located in that same directory.
+    static packDirectory(directory, destination, level) {
+        if (typeof directory != "String" || directory.length == 0 || typeof destination != "String" || destination.length == 0) {
+            throw "Zstd.packDirectory: directory and destination must be nonempty Strings";
+        }
+        const absoluteDirectory = Path.resolve(directory);
+        const archivePath = Path.resolve(destination);
+        const filenames = [];
+        for (const entry of Fs.readDir(absoluteDirectory)) {
+            if (entry["isFile"] &&
+                Path.resolve(absoluteDirectory, entry["name"]) != archivePath) {
+                filenames.push(entry["name"]);
+            }
+        }
+        return Zstd.packFiles(absoluteDirectory, filenames, destination, level);
+    }
+
+    // Extract a .tar.zst directly into a NEW directory (no intermediate TAR).
+    // The archive may contain at most 64 regular files with flat safe names.
+    // Existing destination directories are never intentionally overwritten.
+    static unpackFiles(archive, destinationDirectory, maxOutputBytes) {
+        if (typeof archive != "String" || archive.length == 0 || typeof destinationDirectory != "String" || destinationDirectory.length == 0) {
+            throw "Zstd.unpackFiles: archive and destination directory must be nonempty Strings";
+        }
+        const limit = maxOutputBytes == null ? 1_073_741_824 : maxOutputBytes;
+        if (typeof limit != "Number" || limit <= 0) {
+            throw "Zstd.unpackFiles: maxOutputBytes must be a positive Number";
+        }
+        const directory = Path.resolve(destinationDirectory);
+        const status = nativeUnpackFiles.call(Path.resolve(archive), directory, limit);
+        if (status != 0) {
+            throw `Zstd.unpackFiles failed (${status}): ${nativeError.call()}`;
+        }
+        return directory;
+    }
+
+    // Convenient alias: unpack("module.tar.zst") creates "module/".
+    static unpack(archive, destinationDirectory, maxOutputBytes) {
+        if (typeof archive != "String" || archive.length == 0) {
+            throw "Zstd.unpack: archive must be a nonempty String";
+        }
+        let destination = destinationDirectory;
+        if (destination == null) {
+            if (archive.endsWith(".tar.zst")) {
+                destination = archive.slice(0, archive.length - 8);
+            } else if (archive.endsWith(".orange")) {
+                destination = archive.slice(0, archive.length - 7);
+            } else {
+                throw "Zstd.unpack: destination required unless archive ends with .tar.zst or .orange";
+            }
+        }
+        return Zstd.unpackFiles(archive, destination, maxOutputBytes);
+    }
+
     static versionNumber() {
         return nativeZstdVersion.call();
     }

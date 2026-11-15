@@ -1,0 +1,49 @@
+// End-to-end Napalm test of all three multi-file pack APIs.
+// Run from the project root after compiling the native package.
+import Zstd from "../package/zstd/index.napalm";
+
+function expect(condition, description) {
+    if (!condition) throw `FireZstd multi-file test: ${description}`;
+}
+
+const directory = Zstd.packageRoot();
+const archive = Path.resolve(Process.cwd(), "__firezstd_multi_file_test.tar.zst");
+const tarFile = Path.resolve(Process.cwd(), "__firezstd_multi_file_test.tar");
+const first = Path.join(directory, "index.napalm");
+const second = Path.join(directory, "LICENSE.zstd");
+
+if (Fs.exists(archive) || Fs.exists(tarFile)) {
+    throw "FireZstd multi-file test would overwrite an existing file";
+}
+
+try {
+    // Explicit flat filenames.
+    Zstd.packFiles(directory, ["index.napalm", "LICENSE.zstd"], archive, 18);
+    Zstd.decompressFile(archive, tarFile, 50_000_000);
+    let tarBytes = Fs.readBytes(tarFile);
+    expect(tarBytes.slice(0, 12).toUtf8() == "index.napalm", "first TAR entry name");
+    expect(tarBytes.slice(257, 262).toUtf8() == "ustar", "POSIX ustar header");
+    const sourceBytes = Fs.readBytes(first);
+    const prefixSize = sourceBytes.length < 24 ? sourceBytes.length : 24;
+    expect(tarBytes.slice(512, 512 + prefixSize).toUtf8() ==
+           sourceBytes.slice(0, prefixSize).toUtf8(), "TAR stores original bytes");
+    Fs.removeFile(archive);
+    Fs.removeFile(tarFile);
+
+    // Explicit relative/absolute paths, with a common parent directory.
+    Zstd.packPaths([first, second], archive, 18);
+    Zstd.decompressFile(archive, tarFile, 50_000_000);
+    tarBytes = Fs.readBytes(tarFile);
+    expect(tarBytes.slice(0, 12).toUtf8() == "index.napalm", "packPaths entry name");
+    expect(tarBytes.slice(257, 262).toUtf8() == "ustar", "packPaths creates TAR");
+    Fs.removeFile(archive);
+    Fs.removeFile(tarFile);
+
+    // Every immediate regular file; no recursion or directory entries.
+    Zstd.packDirectory(directory, archive, 18);
+    expect(Fs.exists(archive) && Fs.stat(archive).size > 0, "packDirectory creates archive");
+    System.print("FireZstd multi-file tests passed");
+} finally {
+    if (Fs.exists(archive)) Fs.removeFile(archive);
+    if (Fs.exists(tarFile)) Fs.removeFile(tarFile);
+}

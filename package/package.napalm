@@ -1,0 +1,98 @@
+// Build the distributable zstd package using the FireZstd native FFI.
+// Run from the project root: napalm package/package.napalm
+// The output is dist/zstd-0.1.0.orange plus dist/package.json.
+import Zstd from "./zstd/index.napalm";
+
+const packageId = "zstd";
+const packageName = "zstd";
+const packageVersion = "0.1.0";
+const packageAuthor = "Andrés Brugarolas";
+const packageUrl = "https://github.com/NapalmLang/PackageZstd";
+const packageDescription = "Native Zstandard compression and secure TAR archive support for Napalm, with FFI libraries for Windows, Linux and macOS on x86_64 and ARM64.";
+const compressionLevel = 18;
+
+// Derive the repository root from the directory found by the Zstd module.
+const moduleDirectory = Path.resolve(Zstd.packageRoot());
+const packageDirectory = Path.dirname(moduleDirectory);
+if (Path.basename(moduleDirectory) != "zstd" ||
+    Path.basename(packageDirectory) != "package") {
+    throw `PackageZstd: expected a package/zstd directory, got ${moduleDirectory}`;
+}
+
+const projectRoot = Path.dirname(packageDirectory);
+const distDirectory = Path.join(projectRoot, "dist");
+const archivePath = Path.join(distDirectory, `${packageId}-${packageVersion}.orange`);
+const metadataPath = Path.join(distDirectory, "package.json");
+
+// Refuse to publish an incomplete cross-platform package.
+const requiredFiles = [
+    "index.napalm",
+    "libzstd-windows-x86_64.dll",
+    "libzstd-windows-aarch64.dll",
+    "libzstd-linux-x86_64.so",
+    "libzstd-linux-aarch64.so",
+    "libzstd-macos-x86_64.dylib",
+    "libzstd-macos-aarch64.dylib",
+];
+for (const filename of requiredFiles) {
+    const filePath = Path.join(moduleDirectory, filename);
+    if (!Fs.exists(filePath)) {
+        throw `PackageZstd: missing required file: ${filePath}`;
+    }
+    const information = Fs.stat(filePath);
+    if (!information.isFile || information.size <= 0) {
+        throw `PackageZstd: required file is empty or not regular: ${filePath}`;
+    }
+}
+
+// FireZstd's current TAR writer handles up to 64 flat, regular files.
+// Reject unsupported entries instead of silently omitting them.
+const entries = Fs.readDir(moduleDirectory);
+if (entries.length < requiredFiles.length || entries.length > 64) {
+    throw `PackageZstd: expected between ${requiredFiles.length} and 64 files, got ${entries.length}`;
+}
+for (const entry of entries) {
+    if (!entry["isFile"] || entry["isSymlink"]) {
+        throw `PackageZstd: unsupported package entry: ${entry["name"]}`;
+    }
+}
+
+Fs.mkdirAll(distDirectory);
+
+// Preserve the first release creation timestamp on subsequent builds.
+const now = new Date().toISOString();
+let creationDate = now;
+if (Fs.exists(metadataPath)) {
+    const previous = JSON.parse(Fs.readText(metadataPath));
+    if (previous == null || previous["id"] != packageId) {
+        throw `PackageZstd: ${metadataPath} is not a zstd package manifest`;
+    }
+    if (typeof previous["creation_date"] != "String" ||
+        previous["creation_date"].length == 0) {
+        throw `PackageZstd: ${metadataPath} has an invalid creation_date`;
+    }
+    if (previous["version"] == packageVersion) {
+        creationDate = previous["creation_date"];
+    }
+}
+
+const metadata = {
+    id: packageId,
+    name: packageName,
+    version: packageVersion,
+    author: packageAuthor,
+    url: packageUrl,
+    description: packageDescription,
+    creation_date: creationDate,
+    last_modification: now,
+};
+
+// Zstd.packDirectory writes ustar straight into a Zstandard level-18 stream.
+// The .orange extension is intentional; no intermediate .tar is produced.
+// This includes all regular files directly inside package/zstd, not just
+// the required files listed above.
+Zstd.packDirectory(moduleDirectory, archivePath, compressionLevel);
+Fs.writeText(metadataPath, JSON.stringify(metadata));
+
+System.print(`Created ${archivePath} (${entries.length} files, Zstd level ${compressionLevel})`);
+System.print(`Created ${metadataPath}`);

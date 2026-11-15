@@ -3,7 +3,9 @@
 
 #include <stdint.h>
 
-#if defined(_WIN32)
+#if defined(FIRE_ZSTD_STATIC)
+#  define FIRE_ZSTD_API
+#elif defined(_WIN32)
 #  if defined(FIRE_ZSTD_EXPORTS)
 #    define FIRE_ZSTD_API __declspec(dllexport)
 #  else
@@ -32,6 +34,12 @@ FIRE_ZSTD_API int32_t fire_zstd_version_number(void);
 FIRE_ZSTD_API const char *fire_zstd_last_error(void);
 FIRE_ZSTD_API int32_t fire_zstd_compress_file(const char *source_utf8, const char *destination_utf8, int32_t level);
 FIRE_ZSTD_API int32_t fire_zstd_decompress_file(const char *source_utf8, const char *destination_utf8, uint64_t max_output_bytes);
+/* Newline-delimited flat file basenames, archived as POSIX ustar and Zstd-compressed. */
+FIRE_ZSTD_API int32_t fire_zstd_pack_files(const char *directory_utf8, const char *filenames_utf8, const char *destination_utf8, int32_t level);
+/* Extract one Zstandard-compressed ustar archive into a new destination directory.
+ * Only flat regular files are allowed, up to 64 entries and max_output_bytes
+ * of file data. Never replaces an existing destination. No intermediate TAR. */
+FIRE_ZSTD_API int32_t fire_zstd_unpack_files(const char *archive_utf8, const char *destination_directory_utf8, uint64_t max_output_bytes);
 
 #ifdef __cplusplus
 }

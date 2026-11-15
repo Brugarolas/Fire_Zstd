@@ -3,3 +3,5 @@ _fire_zstd_version_number
 _fire_zstd_last_error
 _fire_zstd_compress_file
 _fire_zstd_decompress_file
+_fire_zstd_pack_files
+_fire_zstd_unpack_files

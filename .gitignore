@@ -5,3 +5,5 @@
 *.fire-tmp-*
 build-*
 vendor
+package/zstd/libzstd*
+/dist/
