@@ -95,8 +95,7 @@ static FILE *open_temporary(const char *destination, char **temporary_path) {
     if (!name) return NULL;
     for (unsigned int attempt = 0; attempt < 64; attempt++) {
         unsigned long sequence = (unsigned long)InterlockedIncrement(&counter);
-        int count = snprintf(name, length + 80, "%s.fire-tmp-%lu-%lu", destination,
-                             (unsigned long)GetCurrentProcessId(), sequence);
+        int count = snprintf(name, length + 80, "%s.fire-tmp-%lu-%lu", destination, (unsigned long)GetCurrentProcessId(), sequence);
         if (count < 0 || (size_t)count >= length + 80) break;
         wchar_t *wide = utf8_to_wide(name);
         if (!wide) break;
@@ -256,8 +255,7 @@ cleanup:
     return status;
 }
 
-int32_t fire_zstd_decompress_file(const char *source, const char *destination,
-                                 uint64_t max_output_bytes) {
+int32_t fire_zstd_decompress_file(const char *source, const char *destination, uint64_t max_output_bytes) {
     clear_error();
     int32_t status = validate(source, destination);
     if (status) return status;

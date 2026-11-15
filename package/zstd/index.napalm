@@ -15,6 +15,16 @@ const nativeName = os == "windows" ? "fire_zstd.dll"
     : os == "macos" ? "libfire_zstd.dylib"
     : "libfire_zstd.so";
 
+function getNativeName() {
+    if (os == "windows") {
+        return "fire_zstd.dll";
+    }
+    if (os == "macos") {
+        return "libfire_zstd.dylib";
+    }
+    return "libfire_zstd.so";
+}
+
 function findPackageRoot() {
     const explicitRoot = Process.getenv("FIRE_ZSTD_ROOT");
     if (explicitRoot != null && explicitRoot.length > 0) {
@@ -43,7 +53,7 @@ function findPackageRoot() {
 }
 
 const packageRoot = findPackageRoot();
-const nativePath = Path.resolve(packageRoot, "native", `${os}-${arch}`, nativeName);
+const nativePath = Path.resolve(packageRoot, "native", `${os}-${arch}`, getNativeName);
 if (!Fs.exists(nativePath)) {
     throw `Zstd: native library not present for ${os}-${arch}: ${nativePath}`;
 }
@@ -52,10 +62,8 @@ const nativeLibrary = FFI.open(nativePath);
 const nativeAbiVersion = nativeLibrary.function("fire_zstd_abi_version", "i32", []);
 const nativeZstdVersion = nativeLibrary.function("fire_zstd_version_number", "i32", []);
 const nativeError = nativeLibrary.function("fire_zstd_last_error", "cstring", []);
-const nativeCompressFile = nativeLibrary.function(
-    "fire_zstd_compress_file", "i32", ["cstring", "cstring", "i32"]);
-const nativeDecompressFile = nativeLibrary.function(
-    "fire_zstd_decompress_file", "i32", ["cstring", "cstring", "u64"]);
+const nativeCompressFile = nativeLibrary.function("fire_zstd_compress_file", "i32", ["cstring", "cstring", "i32"]);
+const nativeDecompressFile = nativeLibrary.function("fire_zstd_decompress_file", "i32", ["cstring", "cstring", "u64"]);
 
 if (nativeAbiVersion.call() != 1) {
     throw "Zstd: incompatible Fire native library ABI";

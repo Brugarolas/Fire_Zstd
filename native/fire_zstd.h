@@ -30,11 +30,8 @@ enum {
 FIRE_ZSTD_API int32_t fire_zstd_abi_version(void);
 FIRE_ZSTD_API int32_t fire_zstd_version_number(void);
 FIRE_ZSTD_API const char *fire_zstd_last_error(void);
-FIRE_ZSTD_API int32_t fire_zstd_compress_file(
-    const char *source_utf8, const char *destination_utf8, int32_t level);
-FIRE_ZSTD_API int32_t fire_zstd_decompress_file(
-    const char *source_utf8, const char *destination_utf8,
-    uint64_t max_output_bytes);
+FIRE_ZSTD_API int32_t fire_zstd_compress_file(const char *source_utf8, const char *destination_utf8, int32_t level);
+FIRE_ZSTD_API int32_t fire_zstd_decompress_file(const char *source_utf8, const char *destination_utf8, uint64_t max_output_bytes);
 
 #ifdef __cplusplus
 }
